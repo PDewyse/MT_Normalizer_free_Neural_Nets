@@ -1,0 +1,120 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class Swish(nn.Module):
+    def forward(self, x):
+        return x * torch.sigmoid(x)
+
+class SEBlock(nn.Module):
+    def __init__(self, in_channels, reduction=4):
+        super(SEBlock, self).__init__()
+        reduced_channels = in_channels // reduction
+        self.fc1 = nn.Conv2d(in_channels, reduced_channels, kernel_size=1)
+        self.fc2 = nn.Conv2d(reduced_channels, in_channels, kernel_size=1)
+    
+    def forward(self, x):
+        scale = F.adaptive_avg_pool2d(x, 1)
+        scale = torch.relu(self.fc1(scale))
+        scale = torch.sigmoid(self.fc2(scale))
+        return x * scale
+
+class MBConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, expand_ratio, stride, se_ratio):
+        super(MBConvBlock, self).__init__()
+        self.expand_ratio = expand_ratio
+        self.stride = stride
+
+        mid_channels = in_channels * expand_ratio
+        
+        self.expand_conv = nn.Conv2d(in_channels, mid_channels, kernel_size=1, bias=False)
+        self.bn0 = nn.BatchNorm2d(mid_channels)
+        self.depthwise_conv = nn.Conv2d(mid_channels, mid_channels, kernel_size=3, stride=stride, padding=1, groups=mid_channels, bias=False)
+        self.bn1 = nn.BatchNorm2d(mid_channels)
+        self.se_block = SEBlock(mid_channels, reduction=int(1/se_ratio))
+        self.project_conv = nn.Conv2d(mid_channels, out_channels, kernel_size=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.swish = Swish()
+
+    def forward(self, x):
+        if self.expand_ratio != 1:
+            out = self.swish(self.bn0(self.expand_conv(x)))
+        else:
+            out = x
+        
+        out = self.swish(self.bn1(self.depthwise_conv(out)))
+        out = self.se_block(out)
+        out = self.bn2(self.project_conv(out))
+        
+        if self.stride == 1 and x.size() == out.size():
+            out = x + out
+        return out
+
+class EfficientNetB0(nn.Module):
+    def __init__(self, num_classes=1000):
+        super(EfficientNetB0, self).__init__()
+        
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            Swish()
+        )
+        
+        self.blocks = nn.Sequential(
+            MBConvBlock(32, 16, expand_ratio=1, stride=1, se_ratio=0.25),
+            MBConvBlock(16, 24, expand_ratio=6, stride=2, se_ratio=0.25),
+            MBConvBlock(24, 24, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(24, 40, expand_ratio=6, stride=2, se_ratio=0.25),
+            MBConvBlock(40, 40, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(40, 80, expand_ratio=6, stride=2, se_ratio=0.25),
+            MBConvBlock(80, 80, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(80, 80, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(80, 112, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(112, 112, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(112, 112, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(112, 192, expand_ratio=6, stride=2, se_ratio=0.25),
+            MBConvBlock(192, 192, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(192, 192, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(192, 192, expand_ratio=6, stride=1, se_ratio=0.25),
+            MBConvBlock(192, 320, expand_ratio=6, stride=1, se_ratio=0.25),
+        )
+        
+        self.head = nn.Sequential(
+            nn.Conv2d(320, 1280, kernel_size=1, bias=False),
+            nn.BatchNorm2d(1280),
+            Swish(),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(1280, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.stem(x)
+        x = self.blocks(x)
+        x = self.head(x)
+        return x
+
+# Define the model
+model = EfficientNetB0(num_classes=100)
+
+# Print model summary (requires torchsummary package)
+print(model)
+
+from torchinfo import summary
+from fvcore.nn import FlopCountAnalysis, parameter_count_table
+# model = EfficientNet(model_variant="b0", num_classes=100, stem_channels=32, feature_size=1280, drop_connect_rate=0.2)
+print(model)
+model = model.to("cuda")
+x = torch.randn(1, 3, 224, 224).to("cuda")
+output = model(x)
+print(output.shape)
+
+# Calculate number of parameters
+print("\nNumber of parameters:")
+summary(model, input_size=(1, 3, 224, 224))
+
+# Calculate FLOPs
+flops = FlopCountAnalysis(model, x)
+print("\nFLOPs:")
+print(flops.total())

@@ -1,0 +1,22 @@
+{
+    "combinable": {
+        "model": ["Linear"],
+        "seed" : [34],
+        "learning_rate": [0.001],
+        "batch_size": [512],
+        "num_epochs": [50],
+        "use_scheduler": [false],
+        "scheduler_step_size": [5],
+        "scheduler_gamma": [0.1],
+        "normalization": [false],
+        "activation": ["Swish", "ReLU", "SELU"],
+        "signal_preserving": [true, false]
+    },
+    "fixed": {
+        "description": ["testing vp sw re se long"],
+        "save_every": [10],
+        "log": [true],
+        "log_signal": [true],
+        "debug": [false]
+    }
+}

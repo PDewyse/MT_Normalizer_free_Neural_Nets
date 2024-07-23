@@ -1,0 +1,5 @@
+checkpoints/
+data/
+wandb/
+**/__pycache__/
+test.py
