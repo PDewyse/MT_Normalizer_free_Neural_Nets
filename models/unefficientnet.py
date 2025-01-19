@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -32,6 +33,31 @@ def _drop_path(x, drop_prob, training):
     #     x = x * mask
     return x
 
+class WSConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True):
+        super(WSConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        
+        nn.init.xavier_normal_(self.weight)
+        self.gain = nn.Parameter(torch.ones(self.out_channels, 1, 1, 1)) 
+        self.register_buffer('eps', torch.tensor(1e-4, requires_grad=False), persistent=False)
+        self.register_buffer('fan_in', torch.tensor(np.prod(self.weight.shape[1:]), requires_grad=False).type_as(self.weight), persistent=False)
+
+    def standardized_weights(self):
+        # Original code: HWCN
+        mean = torch.mean(self.weight, axis=[1,2,3], keepdims=True)
+        var = torch.var(self.weight, axis=[1,2,3], keepdims=True)
+        scale = 1 / torch.sqrt(torch.maximum(var * self.fan_in, self.eps))
+        return (self.weight - mean) * scale * self.gain
+    
+    def forward(self, x):
+        return nn.functional.conv2d(x, 
+                                    weight=self.standardized_weights(), 
+                                    bias=self.bias, 
+                                    stride=self.stride, 
+                                    padding=self.padding,
+                                    dilation=self.dilation, 
+                                    groups=self.groups)
+
 class SqueezeAndExcite(nn.Module):
     def __init__(self, channels, squeeze_channels, se_ratio, activation=Swish, signal_preserving=False):
         super(SqueezeAndExcite, self).__init__()
@@ -42,33 +68,40 @@ class SqueezeAndExcite(nn.Module):
         squeeze_channels = int(squeeze_channels)
 
         self.se_avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.se_reduce = nn.Conv2d(channels, squeeze_channels, 1, 1, 0, bias=True)
+        self.se_reduce = WSConv2d(channels, squeeze_channels, 1, 1, 0, bias=True)
         self.se_act = activation(signal_preserving=signal_preserving)
-        self.se_expand = nn.Conv2d(squeeze_channels, channels, 1, 1, 0, bias=True)
+        self.se_expand = WSConv2d(squeeze_channels, channels, 1, 1, 0, bias=True)
         self.se_act_scale = nn.Sigmoid()
 
     def forward(self, x):
         out = self.se_avgpool(x)
         out = self.se_act(self.se_reduce(out))
-        out = self.se_act_scale(self.se_expand(out))
-        return x * out
+        scale = self.se_act_scale(self.se_expand(out)) # Place attention on every channel
+        return x * scale * 2 # factor 2 based on A. Brock paper
 
-class MBConvBlock(nn.Module):
+class Block(nn.Module):
     def __init__(self, 
                  in_channels, 
                  out_channels, 
-                 kernel_size, stride, 
-                 expand_ratio, se_ratio, 
-                 drop_connect_rate, 
+                 kernel_size, 
+                 stride, 
+                 expand_ratio, 
+                 se_ratio, 
+                 drop_connect_rate,
+                 alpha = 0.2,
+                 beta = 1.0,
                  activation=Swish,
                  signal_preserving=False,
                  normalization=True):
-        super(MBConvBlock, self).__init__()
+        super(Block, self).__init__()
 
         expand_channels = in_channels * expand_ratio
         self.residual_connection = (stride == 1 and in_channels == out_channels)
         self.drop_connect_rate = drop_connect_rate
         self.norm = normalization
+        self.activation = activation(signal_preserving=signal_preserving)
+        self.alpha = alpha
+        self.beta = beta
 
         conv = []
 
@@ -92,7 +125,7 @@ class MBConvBlock(nn.Module):
         # Squeeze and excite phase
         if se_ratio != 0:
             conv.append(SqueezeAndExcite(expand_channels, in_channels, se_ratio, activation=activation, signal_preserving=signal_preserving))
-        
+
         # Projection phase
         pointwise_conv2 = nn.Sequential(
             nn.Conv2d(expand_channels, out_channels, 1, 1, 0, bias=False),
@@ -103,24 +136,26 @@ class MBConvBlock(nn.Module):
         self.conv = nn.Sequential(*conv)
 
     def forward(self, x):
+        out = self.activation(x) / self.beta
+        
         if self.residual_connection:
-            # with stochastic depth drop connect
-            main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
-            return x + main_path
+            main_path = _drop_path(self.conv(out), self.drop_connect_rate, self.training)
+            return x + self.alpha * main_path
         else:
-            return self.conv(x)
+            return self.alpha * self.conv(out)
 
-class EfficientNet(nn.Module):
+class UNEfficientNet(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
                  num_classes=100, 
                  stem_channels=32, 
                  feature_size=1280, 
-                 drop_connect_rate=0.2, 
-                 activation=Swish,
+                 drop_connect_rate=1, 
+                 alpha=0.2,
+                 activation=Swish, # Pass the class, not the instance
                  signal_preserving=False,
-                 normalization=True): # so you can easily turn BatchNorm off
-        super(EfficientNet, self).__init__()
+                 normalization=True):
+        super(UNEfficientNet, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -166,35 +201,53 @@ class EfficientNet(nn.Module):
             activation(signal_preserving=signal_preserving)
             )
 
-        # mobile inverted bottleneck
+        # pre-compute the expected empirical variance for every residual block (A. Brock)
+        # var_0 = 1
+        # var_1 = var_0 + alpha ** 2
+        # var_2 = var_1 + alpha ** 2 --> it just keeps adding alpha ** 2 PER block
+        # TODO: alpha = nn.Parameter(torch.tensor(0.2, requires_grad=True))
         total_blocks = sum(conf[6] for conf in config)
+        betas = [(1.0 + alpha ** 2 * i) ** 0.5 for i in range(total_blocks)]
+        # betas = []
+        # expected_std = 1.0
+        # for _ in range(total_blocks):
+        #     betas.append(1.0/expected_std)
+        #     expected_std = (expected_std **2 + alpha**2)**0.5
+
+        # construct the blocks based on the configuration of the specific model variant
+        b_counter = 0
         blocks = []
         for in_channels, out_channels, kernel_size, stride, expand_ratio, se_ratio, repeats in config:
             # drop connect rate based on block index
             drop_rate = drop_connect_rate * (len(blocks) / total_blocks)
-            blocks.append(MBConvBlock(in_channels, 
-                                      out_channels, 
-                                      kernel_size, 
-                                      stride, 
-                                      expand_ratio, 
-                                      se_ratio, 
-                                      drop_rate, 
-                                      activation=activation, 
-                                      signal_preserving=signal_preserving, 
-                                      normalization=normalization))
-            
+            blocks.append(Block(in_channels, 
+                                    out_channels, 
+                                    kernel_size, 
+                                    stride, 
+                                    expand_ratio, 
+                                    se_ratio, 
+                                    drop_rate,
+                                    alpha=alpha,
+                                    beta=betas[b_counter],
+                                    activation=activation, 
+                                    signal_preserving=signal_preserving, 
+                                    normalization=normalization))
+            b_counter += 1
             for _ in range(repeats-1):
                 drop_rate = drop_connect_rate * (len(blocks) / total_blocks)
-                blocks.append(MBConvBlock(out_channels, 
-                                          out_channels, 
-                                          kernel_size, 
-                                          1, 
-                                          expand_ratio, 
-                                          se_ratio, 
-                                          drop_rate, 
-                                          activation=activation,
-                                          signal_preserving=signal_preserving,
-                                          normalization=normalization))
+                blocks.append(Block(out_channels,
+                                        out_channels,
+                                        kernel_size,
+                                        1,
+                                        expand_ratio,
+                                        se_ratio,
+                                        drop_rate,
+                                        alpha=alpha,
+                                        beta=betas[b_counter],
+                                        activation=activation,
+                                        signal_preserving=signal_preserving,
+                                        normalization=normalization))
+                b_counter += 1
 
         self.blocks = nn.Sequential(*blocks)
 
@@ -204,7 +257,7 @@ class EfficientNet(nn.Module):
             *([nn.BatchNorm2d(feature_size)] if normalization else []),
             activation(signal_preserving=signal_preserving)
             )
-
+        
         # classifier
         self.classifier = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
@@ -212,7 +265,7 @@ class EfficientNet(nn.Module):
             nn.Dropout(variants[model_variant][3]),
             nn.Linear(feature_size, num_classes)
         )
-
+ 
         self._initialize_weights()
 
     def forward(self, x):
@@ -226,9 +279,7 @@ class EfficientNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He/kaiming initialization
-                # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # nn.init.xavier_normal_(m.weight) # xavier initialization
+                m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He initialization
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
@@ -250,14 +301,14 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
     activation_class = load_activation_class('modules.activations', 'Swish')
-    model = EfficientNet(model_variant="b0", 
-                         num_classes=100, 
-                         stem_channels=32, 
-                         feature_size=1280, 
-                         drop_connect_rate=0.2, 
-                         activation=activation_class,
-                         signal_preserving=False,
-                         normalization=True)
+    model = UNEfficientNet(model_variant="b0", 
+                           num_classes=100, 
+                           stem_channels=32, 
+                           feature_size=1280, 
+                           drop_connect_rate=0.2,
+                           activation=activation_class,
+                           signal_preserving=True,
+                           normalization=True)
 
     criterion = torch.nn.CrossEntropyLoss()
     model = model.to("cuda")
@@ -269,6 +320,9 @@ if __name__ == '__main__':
     print(output.shape)
 
     # Visualize model
+    # layer_names = [name for name, module in model.named_modules() if len(list(module.children())) == 0]
+    # print("\n".join(layer_names))
+
     # dot = make_dot(model(x), params=dict(model.named_parameters()))
     # dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
 

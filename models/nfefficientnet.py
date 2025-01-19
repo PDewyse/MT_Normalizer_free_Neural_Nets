@@ -24,22 +24,35 @@ def _round_repeats(repeats):
     return int(math.ceil(repeats))
 
 def _drop_path(x, drop_prob, training):
-    """ Apply drop path regularization to input `x` during training."""
-    if drop_prob > 0 and training:
-        keep_prob = 1 - drop_prob
-        # Create the mask with the appropriate device and data type
-        mask = torch.tensor(keep_prob, device=x.device, dtype=x.dtype).bernoulli_().expand_as(x)
-        x = x / keep_prob  # Scale to maintain expected values
-        x = x * mask
+    # """ Apply drop path regularization to input `x` during training."""
+    # if drop_prob > 0 and training:
+    #     keep_prob = 1 - drop_prob
+    #     # Create the mask with the appropriate device and data type
+    #     mask = torch.tensor(keep_prob, device=x.device, dtype=x.dtype).bernoulli_().expand_as(x)
+    #     x = x / keep_prob  # Scale to maintain expected values
+    #     x = x * mask
     return x
 
-def sp_sum(a, b, weight=0.5):
-    """ Signal preserving sum of two tensors."""
+def mp_sum(a, b, weight=0.5):
+    """ Take a weighted average between two tensors and scales the output to have consistent magnitude regardless of the weights.
+    examples:
+        weight = 0.5, both tensors are weighted equally and the output is scaled by 1/sqrt(2)
+        weight = 0.0, only tensor a is used
+        weight = 1.0, only tensor b is used
+        """
     return torch.lerp(a, b, weight) / np.sqrt((1-weight)**2 + weight**2)
 
-class SPConv2d(nn.Conv2d):
+def mp_cat(a, b, dim=1, t=0.5):
+    Na = a.shape[dim]
+    Nb = b.shape[dim]
+    C = np.sqrt((Na + Nb) / ((1 - t) ** 2 + t ** 2))
+    wa = C / np.sqrt(Na) * (1 - t)
+    wb = C / np.sqrt(Nb) * t
+    return torch.cat([wa * a , wb * b], dim=dim)
+
+class MPConv2d(nn.Conv2d):
     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, dilation=1, groups=1, bias=True):
-        super(SPConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
+        super(MPConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
 
     def normalize_weights(self, x, dim=None, eps=1e-4):
         if dim is None:
@@ -67,15 +80,14 @@ class SPConv2d(nn.Conv2d):
                                     dilation=self.dilation, 
                                     groups=self.groups)
 
-class SPAdaptiveAvgPool2d(nn.AdaptiveAvgPool2d):
+class MPAdaptiveAvgPool2d(nn.AdaptiveAvgPool2d):
     def __init__(self, output_size):
-        super(SPAdaptiveAvgPool2d, self).__init__(output_size)
+        super(MPAdaptiveAvgPool2d, self).__init__(output_size)
         raise NotImplementedError
     
-    
-class SPSqueezeAndExcite(nn.Module):
+class MPSqueezeAndExcite(nn.Module):
     def __init__(self, channels, squeeze_channels, se_ratio, activation=Swish, signal_preserving=False):
-        super(SPSqueezeAndExcite, self).__init__()
+        super(MPSqueezeAndExcite, self).__init__()
 
         squeeze_channels = squeeze_channels * se_ratio
         if not squeeze_channels.is_integer():
@@ -83,9 +95,9 @@ class SPSqueezeAndExcite(nn.Module):
         squeeze_channels = int(squeeze_channels)
 
         self.se_avgpool = nn.AdaptiveAvgPool2d((1, 1)) # NOTE: will change mean and std
-        self.se_reduce = SPConv2d(channels, squeeze_channels, 1, 1, 0, bias=True)
+        self.se_reduce = MPConv2d(channels, squeeze_channels, 1, 1, 0, bias=True)
         self.se_act = activation(signal_preserving=signal_preserving)
-        self.se_expand = SPConv2d(squeeze_channels, channels, 1, 1, 0, bias=True)
+        self.se_expand = MPConv2d(squeeze_channels, channels, 1, 1, 0, bias=True)
         self.se_act_scale = nn.Sigmoid()
 
     def forward(self, x):
@@ -94,7 +106,7 @@ class SPSqueezeAndExcite(nn.Module):
         scale = self.se_act_scale(self.se_expand(out)) # Place attention on every channel
         return x * scale
 
-class SPBlock(nn.Module):
+class Block(nn.Module):
     def __init__(self, 
                  in_channels, 
                  out_channels, 
@@ -106,7 +118,7 @@ class SPBlock(nn.Module):
                  activation=Swish,
                  signal_preserving=False,
                  normalization=True):
-        super(SPBlock, self).__init__()
+        super(Block, self).__init__()
 
         expand_channels = in_channels * expand_ratio
         self.residual_connection = (stride == 1 and in_channels == out_channels)
@@ -116,7 +128,7 @@ class SPBlock(nn.Module):
 
         # Point wise convolution phase
         if expand_ratio != 1:
-            pointwise_conv1_layers = [SPConv2d(in_channels, expand_channels, 1, 1, 0, bias=False)]
+            pointwise_conv1_layers = [MPConv2d(in_channels, expand_channels, 1, 1, 0, bias=False)]
             if normalization:
                 pointwise_conv1_layers.append(nn.BatchNorm2d(expand_channels))
             pointwise_conv1_layers.append(activation(signal_preserving=signal_preserving))
@@ -125,7 +137,7 @@ class SPBlock(nn.Module):
             conv.append(pointwise_conv1)
 
         # Depth wise convolution phase
-        depthwise_conv_layers = [SPConv2d(expand_channels,
+        depthwise_conv_layers = [MPConv2d(expand_channels,
                                            expand_channels,
                                            kernel_size,
                                            stride,
@@ -141,11 +153,11 @@ class SPBlock(nn.Module):
 
         # Squeeze and excite phase
         if se_ratio != 0:
-            squeeze_excite = SPSqueezeAndExcite(expand_channels, in_channels, se_ratio, activation=activation, signal_preserving=signal_preserving)
+            squeeze_excite = MPSqueezeAndExcite(expand_channels, in_channels, se_ratio, activation=activation, signal_preserving=signal_preserving)
             conv.append(squeeze_excite)
 
         # Projection phase
-        pointwise_conv2_layers = [SPConv2d(expand_channels, out_channels, 1, 1, 0, bias=False)]
+        pointwise_conv2_layers = [MPConv2d(expand_channels, out_channels, 1, 1, 0, bias=False)]
         if normalization:
             pointwise_conv2_layers.append(nn.BatchNorm2d(out_channels))
         pointwise_conv2 = nn.Sequential(*pointwise_conv2_layers)
@@ -156,11 +168,12 @@ class SPBlock(nn.Module):
 
     def forward(self, x):
         if self.residual_connection:
-            return sp_sum(x, _drop_path(self.conv(x), self.drop_connect_rate, self.training))
+            main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
+            return mp_sum(x, main_path)
         else:
             return self.conv(x)
 
-class SPEfficientNet(nn.Module):
+class NFEfficientNet(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
                  num_classes=100, 
@@ -170,7 +183,7 @@ class SPEfficientNet(nn.Module):
                  activation=Swish, # Pass the class, not the instance
                  signal_preserving=False,
                  normalization=True):
-        super(SPEfficientNet, self).__init__()
+        super(NFEfficientNet, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -210,7 +223,7 @@ class SPEfficientNet(nn.Module):
         # input_size = variants[model_variant][2]
 
         # stem convolution
-        self.stem = [SPConv2d(in_channels=3, 
+        self.stem = [MPConv2d(in_channels=3, 
                                out_channels=stem_channels, 
                                kernel_size=3, 
                                stride=2, 
@@ -227,7 +240,7 @@ class SPEfficientNet(nn.Module):
         for in_channels, out_channels, kernel_size, stride, expand_ratio, se_ratio, repeats in config:
             # drop connect rate based on block index
             drop_rate = drop_connect_rate * (len(blocks) / total_blocks)
-            blocks.append(SPBlock(in_channels, 
+            blocks.append(Block(in_channels, 
                                       out_channels, 
                                       kernel_size, 
                                       stride, 
@@ -240,7 +253,7 @@ class SPEfficientNet(nn.Module):
             
             for _ in range(repeats-1):
                 drop_rate = drop_connect_rate * (len(blocks) / total_blocks)
-                blocks.append(SPBlock(out_channels, 
+                blocks.append(Block(out_channels, 
                                           out_channels, 
                                           kernel_size, 
                                           1, 
@@ -253,7 +266,7 @@ class SPEfficientNet(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
         # head convolution
-        self.head = [SPConv2d(in_channels=config[-1][1], 
+        self.head = [MPConv2d(in_channels=config[-1][1], 
                                out_channels=feature_size, 
                                kernel_size=1, 
                                stride=1, 
@@ -284,7 +297,7 @@ class SPEfficientNet(nn.Module):
 
     def _initialize_weights(self):
         for m in self.modules():
-            if isinstance(m, SPConv2d): # you can also use nn.init.something here
+            if isinstance(m, MPConv2d): # you can also use nn.init.something here
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2.0 / n))
                 if m.bias is not None:
@@ -300,6 +313,7 @@ class SPEfficientNet(nn.Module):
 if __name__ == '__main__':
     from torchinfo import summary
     from fvcore.nn import FlopCountAnalysis, parameter_count_table
+    from torchviz import make_dot
 
     seed = 42
     torch.manual_seed(seed)
@@ -307,7 +321,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
     activation_class = load_activation_class('modules.activations', 'SELU')
-    model = SPEfficientNet(model_variant="b0", 
+    model = NFEfficientNet(model_variant="b0", 
                            num_classes=100, 
                            stem_channels=32, 
                            feature_size=1280, 
@@ -315,7 +329,7 @@ if __name__ == '__main__':
                            activation=activation_class,
                            signal_preserving=False,
                            normalization=True)
-    print(model)
+    
     criterion = torch.nn.CrossEntropyLoss()
     model = model.to("cuda")
     target = torch.randint(1, 100, (10,)).to("cuda")
@@ -324,6 +338,10 @@ if __name__ == '__main__':
     loss = criterion(output, target)
     print(loss)
     print(output.shape)
+
+    # Visualize model
+    dot = make_dot(model(x), params=dict(model.named_parameters()))
+    dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
 
     # # Calculate number of parameters
     # print("\nNumber of parameters:")

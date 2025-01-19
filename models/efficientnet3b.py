@@ -1,6 +1,8 @@
 import math
+import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 if __name__ == '__main__':
     from modules.activations import Swish, load_activation_class
@@ -22,15 +24,25 @@ def _round_repeats(repeats):
     """ Round number of repeats to the nearest integer."""
     return int(math.ceil(repeats))
 
+# use alpha drop out
 def _drop_path(x, drop_prob, training):
-    # """ Apply drop path regularization to input `x` during training."""
+    # """ Apply alpha dropout regularization to input `x` during training."""
     # if drop_prob > 0 and training:
-    #     keep_prob = 1 - drop_prob
-    #     # Create the mask with the appropriate device and data type
-    #     mask = torch.tensor(keep_prob, device=x.device, dtype=x.dtype).bernoulli_().expand_as(x)
-    #     x = x / keep_prob  # Scale to maintain expected values
-    #     x = x * mask
+    #     x = F.alpha_dropout(x, p=drop_prob, training=training)
     return x
+
+# on residual path and branch path
+def mp_sum(a, b, weight=0.5):
+    """ Take a weighted average between two tensors and scales the output to have consistent magnitude regardless of the weights.
+    examples:
+        weight = 0.5, both tensors are weighted equally and the output is scaled by 1/sqrt(2)
+        weight = 0.0, only tensor a is used
+        weight = 1.0, only tensor b is used
+        """
+    device = a.device
+    weight_t = torch.tensor(weight, dtype=torch.float32, device=device) if not isinstance(weight, torch.Tensor) else weight
+    weight_norm = torch.sqrt((1 - weight_t)**2 + weight_t**2).clamp(min=1e-5)
+    return torch.lerp(a, b, weight_t) / weight_norm
 
 class SqueezeAndExcite(nn.Module):
     def __init__(self, channels, squeeze_channels, se_ratio, activation=Swish, signal_preserving=False):
@@ -70,8 +82,9 @@ class MBConvBlock(nn.Module):
         self.drop_connect_rate = drop_connect_rate
         self.norm = normalization
 
-        conv = []
+        self.residual_attention = nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
 
+        conv = []
         # Point wise convolution phase
         if expand_ratio != 1:
             pointwise_conv1 = nn.Sequential(
@@ -92,7 +105,7 @@ class MBConvBlock(nn.Module):
         # Squeeze and excite phase
         if se_ratio != 0:
             conv.append(SqueezeAndExcite(expand_channels, in_channels, se_ratio, activation=activation, signal_preserving=signal_preserving))
-        
+
         # Projection phase
         pointwise_conv2 = nn.Sequential(
             nn.Conv2d(expand_channels, out_channels, 1, 1, 0, bias=False),
@@ -104,13 +117,12 @@ class MBConvBlock(nn.Module):
 
     def forward(self, x):
         if self.residual_connection:
-            # with stochastic depth drop connect
             main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
-            return x + main_path
+            return mp_sum(x, main_path, weight=self.residual_attention)
         else:
             return self.conv(x)
 
-class EfficientNet(nn.Module):
+class EfficientNet3b(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
                  num_classes=100, 
@@ -120,7 +132,7 @@ class EfficientNet(nn.Module):
                  activation=Swish,
                  signal_preserving=False,
                  normalization=True): # so you can easily turn BatchNorm off
-        super(EfficientNet, self).__init__()
+        super(EfficientNet3b, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -141,7 +153,7 @@ class EfficientNet(nn.Module):
             [112, 192, 5, 2, 6, 0.25, 4],
             [192, 320, 3, 1, 6, 0.25, 1]
         ]
-
+        
         # scaling width
         width_coefficient = variants[model_variant][0]
         if width_coefficient != 1:
@@ -165,7 +177,7 @@ class EfficientNet(nn.Module):
             *([nn.BatchNorm2d(stem_channels)] if normalization else []),
             activation(signal_preserving=signal_preserving)
             )
-
+        
         # mobile inverted bottleneck
         total_blocks = sum(conf[6] for conf in config)
         blocks = []
@@ -204,7 +216,7 @@ class EfficientNet(nn.Module):
             *([nn.BatchNorm2d(feature_size)] if normalization else []),
             activation(signal_preserving=signal_preserving)
             )
-
+        
         # classifier
         self.classifier = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
@@ -225,10 +237,7 @@ class EfficientNet(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He/kaiming initialization
-                # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # nn.init.xavier_normal_(m.weight) # xavier initialization
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='linear')
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
@@ -250,15 +259,14 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
     activation_class = load_activation_class('modules.activations', 'Swish')
-    model = EfficientNet(model_variant="b0", 
+    model = EfficientNet3b(model_variant="b0", 
                          num_classes=100, 
                          stem_channels=32, 
                          feature_size=1280, 
                          drop_connect_rate=0.2, 
                          activation=activation_class,
                          signal_preserving=False,
-                         normalization=True)
-
+                         normalization=False)
     criterion = torch.nn.CrossEntropyLoss()
     model = model.to("cuda")
     target = torch.randint(1, 100, (10,)).to("cuda")
@@ -267,10 +275,14 @@ if __name__ == '__main__':
     loss = criterion(output, target)
     print(loss)
     print(output.shape)
-
+    
     # Visualize model
-    # dot = make_dot(model(x), params=dict(model.named_parameters()))
-    # dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
+    all_layers = [f" {name} {module.__class__.__name__}" for name, module in model.named_parameters()]
+    layer_names = [name for name, module in model.named_modules() if len(list(module.children())) == 0]
+    print("\n".join(all_layers))
+                    
+    dot = make_dot(model(x), params=dict(model.named_parameters()))
+    dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
 
     # # Calculate number of parameters
     # print("\nNumber of parameters:")

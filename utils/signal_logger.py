@@ -9,24 +9,40 @@ class SignalLogger:
         Args:
             model (torch.nn.Module): PyTorch model
             layer_names (list): List of layer names for which activations, weights and gradients should be logged
-
-        Example:
-            model = torchvision.models.efficientnet_b0(weights="IMAGENET1K_V1")
+        Important: 
+            The model should be created with inplace=False for activations, otherwise the hook will not work.
+        Example usage:
+        ```python
+            import torch
+            import torch.nn as nn
+            model = nn.Sequential(
+                nn.Linear(224, 100),
+                nn.ReLU(inplace=False), # inplace=False is important for hook to work
+                nn.Linear(100, 10)
+            )
             signal_logger = SignalLogger(model)
             hooks = signal_logger.register_hooks()
 
-            x = torch.randn(1, 3, 224, 224)
-            model(x) # the hooks will be called during the forward pass
+            for _ in range(10):
+                inputs = torch.randn(32, 224)
+                outputs = model(inputs)
+                loss = outputs.sum()
+                loss.backward()
+                signal_logger.extract_weights()
+                signal_logger.update_running_stats()
 
-            signal_logger.extract_weights()
-            signal_logger.update_running_stats()
-            stats = signal_logger.get_signal_statistics()
-            signal_logger.clear()
             for hook in hooks:
                 hook.remove()
-            print(stats, len(stats))
+
+            signal_stats = signal_logger.get_signal_statistics()
+            print(signal_stats)
+            signal_logger.clear()
+        ```
         """
         self.model = model
+        # Get all layers without children (i.e. leaf nodes)
+        # self.layer_names = layer_names or [f"{name} {module.__class__.__name__}" for name, module in model.named_modules() if len(list(module.children())) == 0]
+
         self.layer_names = layer_names or [name for name, module in model.named_modules() if len(list(module.children())) == 0]
         self.batch_activations = {name: [] for name in self.layer_names}
         self.batch_weights = {name: [] for name in self.layer_names}
@@ -66,7 +82,11 @@ class SignalLogger:
         """ Extract weights for all layers in the model """
         for name, module in self.model.named_modules():
             if name in self.layer_names:
-                params = list(module.parameters())
+                # params = list(module.parameters()) # TODO: Use all params or specific ones?
+                # options: weight, bias, (gain), (alpha), ... (for bn weight:=gamma, bias:=beta)
+                # specific learnable params can be filtered automatically by naming them accordingly (e.g.: residual_weight)
+                # be careful because it looks for the substring weight!
+                params = [p for n, p in module.named_parameters() if 'weight' in n]
                 if params:
                     parameters = parameters_to_vector(params)
                     self.batch_weights[name].append(parameters.detach().cpu().numpy())
@@ -74,10 +94,17 @@ class SignalLogger:
     def _update_stats(self, batch_data, layer, stat_prefix):
         if batch_data:
             concatenated_data = np.concatenate(batch_data, axis=0)
-            mean = np.mean(concatenated_data)
-            std = np.std(concatenated_data)
+            if concatenated_data.ndim <= 2: # 1 square batch values, 2 mean 
+                mean = np.mean(concatenated_data**2)
+                var = np.var(concatenated_data)
+            elif concatenated_data.ndim == 4: # 1 mean over batch and spatial, 2 square them, 3 mean over channels (so they don't cancel out)
+                mean = np.mean(np.mean(concatenated_data, axis=(0,2,3))**2) 
+                var = np.mean(np.var(concatenated_data, axis=(0,2,3)))
+            else:
+                raise ValueError(f"Unsupported shape: {concatenated_data.shape}")
+            
             self.running_stats[layer][f'mean_{stat_prefix}'] += mean
-            self.running_stats[layer][f'std_{stat_prefix}'] += std
+            self.running_stats[layer][f'std_{stat_prefix}'] += var
             batch_data.clear()
 
     def update_running_stats(self):
@@ -127,29 +154,32 @@ class SignalLogger:
 
 # Example usage
 if __name__ == "__main__":
-    import torchvision
-    model = torchvision.models.efficientnet_b0(weights="IMAGENET1K_V1")  # Updated for latest torchvision API
+    import torch
+    import torch.nn as nn
+    model = nn.Sequential(
+        nn.Linear(224, 100),
+        nn.ReLU(inplace=False), # inplace=False is important for hook to work
+        nn.Linear(100, 10)
+    )
     signal_logger = SignalLogger(model)
     hooks = signal_logger.register_hooks()
-    x = torch.randn(1, 3, 224, 224)
-    model(x) # the hooks will be called during the forward pass
-    signal_logger.extract_weights()
-    signal_logger.update_running_stats()
-    stats = signal_logger.get_signal_statistics()
-    
-    signal_logger.clear()
+
+    # give an example training loop
+    for _ in range(10):
+        inputs = torch.randn(32, 224)
+        outputs = model(inputs)
+        loss = outputs.sum()
+        loss.backward()
+        signal_logger.extract_weights()
+        signal_logger.update_running_stats()
+
     for hook in hooks:
         hook.remove()
+
+    signal_stats = signal_logger.get_signal_statistics()
+    print(signal_stats)
+    signal_logger.clear()
+
+
     
-    print(stats, len(stats))
-    #  now plot the mean activations and weights with respect to the layers
-    import matplotlib.pyplot as plt
-    layer_names = list(stats.keys())
-    mean_acts = [stats[layer]['mean_act'] for layer in layer_names]
-    mean_weights = [stats[layer]['mean_weight'] for layer in layer_names]
-    mean_grads = [stats[layer]['mean_grad'] for layer in layer_names]
-    plt.plot(mean_acts, label='Mean Activations')
-    plt.plot(mean_weights, label='Mean Weights')
-    plt.plot(mean_grads, label='Mean Gradients')
-    plt.legend()
-    plt.show()
+    

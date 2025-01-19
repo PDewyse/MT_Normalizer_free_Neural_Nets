@@ -97,7 +97,6 @@ class Trainer:
         with tqdm.tqdm(total=len(self.dataloader)*num_epochs, desc="Epoch progress") as pbar:
             for epoch in range(num_epochs):
                 train_loss, signal_stats, epoch_stats = self.train()
-                
                 if val_loader:
                     val_loss, metrics = self.validate(val_loader)
                     pbar.set_postfix({"train_loss": train_loss, "val_loss": val_loss, "accuracy" : metrics["accuracy"]})
@@ -133,7 +132,6 @@ class Trainer:
                     for layer, stat in stats.items():
                         f.write(f"{epoch}\t{batch}\t{layer}\t{stat['mean_act']}\t{stat['std_act']}\t{stat['mean_weight']}\t{stat['std_weight']}\t{stat['mean_grad']}\t{stat['std_grad']}\n")
 
-        # Check if file exists to determine if header needs to be written
         log_file = os.path.join(self.save_dir, "training_log.txt")
         if not os.path.exists(log_file):
             with open(log_file, 'w') as f:

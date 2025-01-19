@@ -27,7 +27,14 @@ def get_with_warning(config, key, default, config_name="config"):
     return config.get(key, default)
 
 def load_class(module_name, class_name):
-    """Dynamically load a model class from a module."""
+    """Dynamically load a model class from a module. make sure that the module correctly names the class.
+    
+    Args:
+        module_name (str): Name of the module containing the class.
+        class_name (str): Name of the class to load.
+        
+    Returns:
+        class: The class object."""
     try:
         module = importlib.import_module(module_name)
         return getattr(module, class_name)
@@ -56,7 +63,7 @@ def main(args):
     log = get_with_warning(config, 'log', False) # True (WandB+local), False (on terminal)
     log_signal = get_with_warning(config, 'log_signal', False) # NOTE: huge performance hit!
     debug = get_with_warning(config, 'debug', True)
-    #
+    # Tune parameters here
     normalization = get_with_warning(config, 'normalization', True)
     activation = get_with_warning(config, 'activation', 'Swish')
     signal_preserving = get_with_warning(config, 'signal_preserving', False)
@@ -64,7 +71,31 @@ def main(args):
     # Seed for torch and everything
     set_seed(seed)
 
-    model_names = ['DebugCNN', 'EfficientNet', 'Linear', 'SPEfficientNet', 'SPEfficientNetv2'] # TODO: find a way to automate this lookup via ast.parse
+    model_names = [
+        'DebugCNN',
+        'CNN', 
+        'CNN1',
+        'CNN2',
+        'SNEfficientNet',
+        'SNEfficientNet1',
+        'UNEfficientNet',
+        'EfficientNet', 
+        'EfficientNet1',
+        'EfficientNet1b',
+        'EfficientNet2',
+        'EfficientNet3',
+        'EfficientNet3b',
+        'EfficientNet4',
+        'EfficientNet4b',
+        'FFNN', 
+        'NFEfficientNet', 
+        'NFEfficientNetv2',
+        'NFEfficientNetv3', 
+        "NFEfficientNetv4",
+        "SENet",
+        "NFMobileNetv3"
+        ] # TODO: find a way to automate this lookup via ast.parse
+    
     if model_name not in model_names:
         raise ValueError(f"Model name '{model_name}' not found in available models: {model_names}")
     if '_' in description:
@@ -80,7 +111,7 @@ def main(args):
     print(f"Training configuration:\n{config}")
 
     if log:
-        wandb.init(project=f"Training {model_name} ({description})", name=model_name, notes=description)
+        wandb.init(project=f"Training {model_name}", name=description, notes=description)
         wandb.config.update(config)
         with open(os.path.join(save_dir, "config.json"), 'w') as f:
             json.dump(config, f)
@@ -123,7 +154,7 @@ def main(args):
 
     # Training setup
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)# , weight_decay=1e-5)
     scheduler = None
     if use_scheduler:
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
@@ -139,7 +170,12 @@ def main(args):
                       log=log, 
                       log_signal=log_signal)
     trainer.train_model(num_epochs=num_epochs, val_loader=val_loader)
-
+    # save the whole model
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_class': model.__class__.__name__,
+        'model_args': {"activation": activation, "normalization": normalization, "signal_preserving": signal_preserving},
+    }, os.path.join(save_dir, "final_model_everything.pt"))
     # Test the model
     tester = Tester(model, criterion, test_loader, save_dir, log=log)
     _ = tester.test()

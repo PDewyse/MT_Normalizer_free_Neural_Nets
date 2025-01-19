@@ -10,7 +10,7 @@ def load_activation_class(module_name, class_name):
     except (ImportError, AttributeError) as e:
         raise ImportError(f"Cannot find activation class '{class_name}' in module '{module_name}': {e}")
 
-def compute_sp_const(activation_func, samples=(10240, 2560)):
+def compute_sp_const(activation_func, samples=(1024, 256)):
     """
     Compute the variance-preserving constant for a given activation function using PyTorch.
     
@@ -22,10 +22,10 @@ def compute_sp_const(activation_func, samples=(10240, 2560)):
         gamma: The variance-preserving constant.
     """
     x = torch.randn(samples)
-    # mean_before, std_before = torch.mean(x), torch.std(x)
+    mean_before, std_before = torch.mean(x), torch.std(x)
 
     y = activation_func(x)
-    # mean_after, std_after = torch.mean(y), torch.std(y)
+    mean_after, std_after = torch.mean(y), torch.std(y)
 
     # print(f"Mean before: {mean_before:.4f}, std before: {std_before:.4f}")
     # print(f"Mean after: {mean_after:.4f}, std after: {std_after:.4f}")
@@ -119,6 +119,6 @@ if __name__ == "__main__":
 
     for activation_name in activations:
         activation_class = load_activation_class(module_name, activation_name)
-        activation = activation_class()
+        activation = activation_class(signal_preserving=True)
         print(f"{activation_name} VP const:", activation.sp_const)
         print(activation)

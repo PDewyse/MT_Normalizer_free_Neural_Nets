@@ -7,10 +7,7 @@ import argparse
 def print_hyperparameters(config):
     print("==============================================")
     print("Fixed hyperparameters:")
-    for key, value in config["fixed"].items():
-        print(f"{key}: {value}")
-    print("Combinable hyperparameters:")
-    for key, value in config["combinable"].items():
+    for key, value in config.items():
         print(f"{key}: {value}")
     print("==============================================")
 
@@ -24,34 +21,54 @@ def main(args):
 
     print_hyperparameters(config)
 
-    # Extract combinable and fixed hyperparameters
-    combinable = config["combinable"]
-    fixed = config["fixed"]
+    # extract all combinations of hyperparameters
+    combos = list(itertools.product(*config.values()))
+    # Create a list of dictionaries for each combination
+    combinations = [dict(zip(config.keys(), combo)) for combo in combos]
+    
+    # # Extract combinable and fixed hyperparameters
+    # combinable = config["combinable"]
+    # fixed = config["fixed"]
 
-    combinable_keys, combinable_values = zip(*combinable.items())
-    combinations = [dict(zip(combinable_keys, v)) for v in itertools.product(*combinable_values)]
+    # combinable_keys, combinable_values = zip(*combinable.items())
+    # combinations = [dict(zip(combinable_keys, v)) for v in itertools.product(*combinable_values)]
 
-    fixed_keys, fixed_values = zip(*fixed.items())
-    fixed_combinations = [dict(zip(fixed_keys, v)) for v in itertools.product(*fixed_values)]
+    # fixed_keys, fixed_values = zip(*fixed.items())
+    # fixed_combinations = [dict(zip(fixed_keys, v)) for v in itertools.product(*fixed_values)]
 
     directories = [
         r"C:\Users\piete\OneDrive - JKU\OneDrive - Johannes Kepler Universität Linz\MSc in AI - JKU\Courses\Thesis\Repositories\MT_Normalizer_free_Neural_Nets"
     ]
 
-    total_combinations = len(combinations) * len(fixed_combinations) * len(directories)
+    # total_combinations = len(combinations) * len(fixed_combinations) * len(directories)
     counter = 1
     for directory in directories:
         print("Training in directory:", directory)
         os.chdir(directory)
-
-        # Iterate over all combinations of hyperparameters
-        for combo in combinations:
-            for fixed_combo in fixed_combinations:
-                combined = {**fixed_combo, **combo}
+        # combinations = [
+        #     # {'model': 'Linear', 'seed': 32, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 1, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'testing spps for repeats', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': True, 'activation': 'ReLU', 'signal_preserving': False},
+        #     # {'model': 'Linear', 'seed': 32, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 1, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'testing spps for repeats', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': True, 'activation': 'ReLU', 'signal_preserving': False},
+        #     # {'model': 'EfficientNet', 'seed': 868, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 20, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'test 5 fold for nf', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': True, 'activation': 'Swish', 'signal_preserving': False},
+        #     # {'model': 'EfficientNet', 'seed': 868, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 20, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'test 5 fold for nf', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': False, 'activation': 'Swish', 'signal_preserving': False},
+        #     # {'model': 'SNEfficientNet', 'seed': 868, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 20, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'test 5 fold for nf', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': False, 'activation': 'SELU', 'signal_preserving': False},
+        #     # {'model': 'SNEfficientNet1', 'seed': 868, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 20, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'test 5 fold for nf', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': False, 'activation': 'SELU', 'signal_preserving': False},
+        #     # {'model': 'UNEfficientNet', 'seed': 868, 'learning_rate': 0.001, 'batch_size': 512, 'num_epochs': 20, 'use_scheduler': False, 'scheduler_step_size': 40, 'scheduler_gamma': 0.1, 'description': 'test 5 fold for nf', 'save_every': 10, 'log': True, 'log_signal': True, 'debug': False, 'normalization': False, 'activation': 'Swish', 'signal_preserving': True},
+        #     ]
+        for i in range(len(combinations)):
+                combined = combinations[i]
                 print("==============================================")
                 print("Using hyperparameters:", combined)
-                print(f"Training combination {counter} of {total_combinations}")
+                print(f"Training combination {i+1} of {len(combinations)}")
                 print("==============================================")
+        # Iterate over all combinations of hyperparameters
+        # for combo in combinations:
+        #     for fixed_combo in fixed_combinations:
+        #         combined = {**fixed_combo, **combo}
+                
+        #         print("==============================================")
+        #         print("Using hyperparameters:", combined)
+        #         print(f"Training combination {counter} of {total_combinations}")
+        #         print("==============================================")
                 
                 # make the config file for a single run
                 combo_config_name = f"combo_config_{counter}.json"

@@ -1,18 +1,18 @@
 {
-    "model": "SPEfficientNet",
+    "model": "UNEfficientNet",
     "seed" : 34,
     "learning_rate": 0.001,
     "batch_size": 512,
     "num_epochs": 20,
     "use_scheduler": false,
-    "scheduler_step_size": 5,
+    "scheduler_step_size": 40,
     "scheduler_gamma": 0.1,
-    "description": "test sp effnet bn",
-    "save_every": 5,
+    "description": "brock work or not",
+    "save_every": 10,
     "log": true,
     "log_signal": true,
     "debug": false,
-    "normalization": true,
+    "normalization": false,
     "activation": "Swish",
     "signal_preserving": true
 }

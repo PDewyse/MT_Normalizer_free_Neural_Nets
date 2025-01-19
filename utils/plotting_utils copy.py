@@ -3,19 +3,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def beautify_layer_name(layer_name):
-    """very specific function to make the layer names more presentable, will vary for each model"""
-    last_part = layer_name.split(".")[-1]
-    try:
-        int(last_part)
-        if last_part == "0":
-            return layer_name.split(".")[-2]
-        if last_part == "1":
-            return "bn"
-        return layer_name.split(".")[-2]
-    except ValueError:
-        return last_part
-    
 def plot_metrics(df, metrics, save_path=None, im_description="", fig_size_modifier=10, **kwargs):
     """
     Plot the metrics in the DataFrame.
@@ -124,10 +111,9 @@ def plot_epoch_signal(df, metrics, epochs, layers=None, save_path=None, im_descr
 
     # Ensure 16:9 aspect ratio
     if not debug:
-        fig_size_modifier = 8 # for FNNNs
-        # fig_size_modifier = 6 # for EfficientNet
+        fig_size_modifier = 10
     width = fig_size_modifier * num_cols
-    height = width * 8 / 10 # 16/9
+    height = width * 9 / 16
 
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(width, height))
     axes = axes.flatten()
@@ -138,7 +124,7 @@ def plot_epoch_signal(df, metrics, epochs, layers=None, save_path=None, im_descr
             layer_metric = [df[layer][epoch][metric] for layer in layers]
             if use_errorbars and f'std_{metric.split("_")[1]}' in metrics and metric.split("_")[0] == "mean":
                 std_metric = [df[layer][epoch][f'std_{metric.split("_")[1]}'] for layer in layers]
-                ax.errorbar(np.arange(len(layers)), layer_metric, yerr=std_metric, **kwargs)
+                ax.errorbar(np.arange(len(layers)), layer_metric, yerr=std_metric, label=f'Epoch {epoch}', **kwargs)
                 y_min = min(layer_metric - np.array(std_metric))
                 y_max = max(layer_metric + np.array(std_metric))
                 margin = 0.1 * (y_max - y_min)
@@ -146,50 +132,24 @@ def plot_epoch_signal(df, metrics, epochs, layers=None, save_path=None, im_descr
             if debug:
                 ax.plot(layers, layer_metric, label=f'Epoch {epoch}', **kwargs)
             if not debug:
-                ax.plot(layers, layer_metric, label=f'Epoch {epoch}', **kwargs)
-                # ax.plot(np.arange(len(layers)), layer_metric, label=f'Epoch {epoch}', **kwargs)
+                ax.plot(np.arange(len(layers)), layer_metric, label=f'Epoch {epoch}', **kwargs)
             
             # Add horizontal line at 0 for mean_act and mean_weight, and at 1 for std_act and std_weight
-            ax.axhline(0, color='black', linestyle='dotted')
-            # if metric in ['mean_act', 'mean_weight', 'mean_grad', 'std_grad']:
-            #     ax.axhline(0, color='black', linestyle='dotted')
-            # elif metric in ['std_act', 'std_weight']:
-            #     ax.axhline(1, color='black', linestyle='dotted')
-            #     ax.axhline(0, color='red', linestyle='dotted')
+            if metric in ['mean_act', 'mean_weight', 'std_grad']:
+                ax.axhline(0, color='black', linestyle='dotted')
+            elif metric in ['std_act', 'std_weight']:
+                ax.axhline(1, color='black', linestyle='dotted')
+                ax.axhline(0, color='red', linestyle='dotted')
         
         if debug:
             ax.set_title(f"{metric}")
             ax.set_xticks(np.arange(len(layers)))
-            ax.set_xticklabels(layers, rotation=90, ha='right')#, fontsize=12)
-            ax.set_xlabel("Layer", fontsize=14)
-            # ax.set_ylim(0, 1e-8)
+            ax.set_xticklabels(layers, rotation=90, ha='right')
+            ax.set_xlabel("Layer")
         else:
-            # with compacting the layer names for FFNN
-            label_size = 10
-            general_size = 13
-            ax.set_xticks(np.arange(len(layers)))
-            # make the layer names less technical
-            compact_layers = [beautify_layer_name(layer) for layer in layers]
-            ax.set_xticklabels(compact_layers, rotation=45, ha='right', fontsize=label_size)
-            ax.tick_params(axis='y', labelsize=label_size)
-
-            # with compacting the layer names for EfficientNet
-            # label_size = 11
-            # general_size = 15
-            # ax.set_xticks(np.arange(0, len(layers), 50))
-            # ax.set_xticklabels(np.arange(0, len(layers), 50), fontsize=label_size)
-            # ax.tick_params(axis='y', labelsize=label_size)
-            # # without compacting the layer names
-            # ax.set_xticks(np.arange(0, len(layers), 5))
-            # ax.set_xticklabels(np.arange(0, len(layers), 5))
-            
-            ax.set_xlabel("Model Depth (layers)", fontsize=general_size)
-            # ax.set_ylim(0, 1e-9)
-
-        ylabel = "ACSM" if "mean" in metric else "ACV"
-        metric_name = "Activations" if "act" in metric else "Weights" if "weight" in metric else "Gradients"
-        ax.set_ylabel(f"{ylabel} of {metric_name}", fontsize=general_size)
-        ax.legend(fontsize=general_size-1)
+            ax.set_xlabel("Model Depth (layers)")
+        ax.set_ylabel(metric.replace("_", " "))
+        ax.legend()
         
     # Remove empty subplots
     for i in range(num_plots, len(axes)):
@@ -262,12 +222,9 @@ def plot_layer_signal(df, metrics, layers, num_epochs=None, save_path=None, im_d
     epoch_numbers = np.arange(len(num_epochs))
     for i, metric in enumerate(metrics):
         ax = axes[i]
-        for i, layer in enumerate(layers):
+        for layer in layers:
             epoch_metric = [df[layer][epoch][metric] for epoch in num_epochs]
-            # print(layer,epoch_metric)
-            # addition = f"block {i} " if "linear" in layer else ""
-            # ax.plot(epoch_numbers, epoch_metric, label=f'{addition}{beautify_layer_name(layer)}', **kwargs)
-            ax.plot(epoch_numbers, epoch_metric, label=layer, **kwargs)
+            ax.plot(epoch_numbers, epoch_metric, label=f'Layer {layer}', **kwargs)
         
         ax.set_title(f"{metric}")
         # ax.set_xticks(epoch_numbers)
@@ -328,83 +285,57 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__)) # root/utils
     root_dir = os.path.dirname(script_dir) # root
 
-    model_name = "FFNN"
-    use_debugging = False
+    model_name = "Linear"
+    use_debugging = True
     use_errorbars = False
-    # get all folder names under the root folder
-    folder_dir = os.path.join(root_dir, "checkpoints", model_name)
-    run_folders = os.listdir(folder_dir)
-    run_folders = ["2024-12-08_00-28-45_test 5 fold spp bn and lr"]
+    # plot_head_tail = 
+    run_folder = "2024-12-07_14-52-41_testing spps for repeats"
     # model_name = "efficientnet"
-    # run_folders = ["2024-07-09_16-29-53_Plot example"]
-      
-    for i in range(len(run_folders)):
-        print(f"Processing run: {run_folders[i]} ({i+1}/{len(run_folders)})")
-        # Parse the log files
-        train_run_dir = os.path.join(root_dir, "checkpoints", model_name, run_folders[i])
-        train_df = parse_log_file(os.path.join(train_run_dir, "training_log.txt"), verbose=False)
-        
-        # split the data frame into two data frames, one for the metrics such as accuracy etc and the other for the layer activations and weights
-        train_metrics = ['train_loss','val_loss', 'accuracy','balanced_accuracy','precision','recall','f1','roc_auc']
-        train_metrics_df = train_df[train_metrics]
-        train_metrics_df['epoch'] = train_df['epoch']
+    # run_folder = "2024-07-09_16-29-53_Plot example"
+    
 
-        train_layers_df = train_df.drop(columns=train_metrics)
-        layer_metrics = ['mean_act', 'std_act', 'mean_weight', 'std_weight', 'mean_grad', 'std_grad']
+    # Parse the log files
+    train_run_dir = os.path.join(root_dir, "checkpoints", model_name, run_folder)
+    train_df = parse_log_file(os.path.join(train_run_dir, "training_log.txt"), verbose=True)
 
-        # Plot the training and testing metrics
-        save_path = os.path.join(train_run_dir, "figures")
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
+    # split the data frame into two data frames, one for the metrics such as accuracy etc and the other for the layer activations and weights
+    train_metrics = ['train_loss','val_loss', 'accuracy','balanced_accuracy','precision','recall','f1','roc_auc']
+    train_metrics_df = train_df[train_metrics]
+    train_metrics_df['epoch'] = train_df['epoch']
 
-        image_description = run_folders[i].split("_")[-1]
-        plot_metrics(df=train_metrics_df, 
-                        metrics=train_metrics, 
-                        fig_size_modifier=10, 
+    train_layers_df = train_df.drop(columns=train_metrics)
+    layer_metrics = ['mean_act', 'std_act', 'mean_weight', 'std_weight', 'mean_grad', 'std_grad']
+
+    # print(train_metrics_df.info())
+    # print(train_layers_df.info())
+
+    # Plot the training and testing metrics
+    save_path = os.path.join(train_run_dir, "figures")
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+
+    image_description = run_folder.split("_")[-1]
+    plot_metrics(df=train_metrics_df, 
+                    metrics=train_metrics, 
+                    fig_size_modifier=10, 
+                    save_path=save_path, 
+                    im_description=image_description)
+    plot_epoch_signal(df=train_layers_df, 
+                        metrics=layer_metrics, 
+                        epochs=[0],
+                        fig_size_modifier=50, 
                         save_path=save_path, 
-                        im_description=image_description)
-        plot_epoch_signal(df=train_layers_df, 
-                            metrics=layer_metrics, 
-                            epochs=[0,9,19],
-                            fig_size_modifier=50, 
-                            save_path=save_path, 
-                            im_description=image_description,
-                            debug=use_debugging,
-                            use_errorbars=use_errorbars)
-        # plot_layer_signal(df=train_layers_df, 
-        #                 metrics=layer_metrics, 
-        #                 layers=['feature_extractor.0', 'feature_extractor.4','feature_extractor.5','feature_extractor.11','classifier.0','classifier.2','classifier.4'],
-        #                 fig_size_modifier=10, 
-        #                 save_path=save_path,
-        #                 im_description=image_description)
-        # for spp test FFNN #["head.0","blocks.0.linear.0","blocks.4.linear.0","blocks.7.linear.0","tail.0"],#['blocks.7.conv.0.0','blocks.7.conv.1.0','blocks.7.conv.2.se_reduce','blocks.7.conv.2.se_expand','blocks.7.conv.3.0'],#["blocks.0.linear.0", "blocks.0.linear.1", "blocks.4.linear.1","blocks.4.linear.2.relu", "blocks.5.linear.0", "blocks.5.linear.1", "blocks.9.linear.0"],
-        # for spp test cnn # ['feature_extractor.0', 'feature_extractor.3','feature_extractor.6','classifier.0','classifier.2','classifier.4']
-        # for spp test CNN1 #
-        # for spp test CNN2 #
-        # example plots
-        # plot_metrics(train_df, ["train_loss", "accuracy"], fig_size_modifier=3, save_path=save_path)
-        # plot_epoch_signal(train_layers_df, layer_metrics, [0,10,19], layers=None, fig_size_modifier=15, save_path=save_path)
-        # plot_layer_signal(train_layers_df, layer_metrics, ["blocks.0.conv.1.se_reduce", "blocks.10.conv.2.se_reduce", "blocks.15.conv.2.se_reduce"], num_epochs=None, fig_size_modifier=4, save_path=save_path)
-      # if repeat_test:
-    #     repeat_dfs = []
-    #     for i in range(len(run_folders)):
-    #         # Parse the log files
-    #         train_run_dir = os.path.join(root_dir, "checkpoints", model_name, run_folders[i])
-    #         train_df = parse_log_file(os.path.join(train_run_dir, "training_log.txt"), verbose=True)
-    #         repeat_dfs.append(train_df)
-        
-    #     # Check if the data frames are the same
-    #     for i in range(1, len(repeat_dfs)):
-    #         if not repeat_dfs[i].equals(repeat_dfs[0]):
-    #             raise ValueError(f"DataFrames {i} and 0 are not equal.")
-        
-    #     # calculate the mean and standard deviation of duplicates
-    #     print(repeat_dfs[0].head())
-    #     # combined_repeat_df = pd.concat(repeat_dfs)
-    #     # mean_repeat_df = combined_repeat_df.mean()
-    #     # std_repeat_df = combined_repeat_df.std()
-
-    #     # print(repeat_dfs[0].head())
-    #     # print(mean_repeat_df.head())
-    #     # print(std_repeat_df.head())
-    #     quit()      
+                        im_description=image_description,
+                        debug=use_debugging,
+                        use_errorbars=use_errorbars)
+    plot_layer_signal(df=train_layers_df, 
+                    metrics=layer_metrics, 
+                    layers=["aSD"],#['blocks.7.conv.0.0','blocks.7.conv.1.0','blocks.7.conv.2.se_reduce','blocks.7.conv.2.se_expand','blocks.7.conv.3.0'],#["blocks.0.linear.0", "blocks.0.linear.1", "blocks.4.linear.1","blocks.4.linear.2.relu", "blocks.5.linear.0", "blocks.5.linear.1", "blocks.9.linear.0"],
+                    fig_size_modifier=10, 
+                    save_path=save_path,
+                    im_description=image_description)
+    # example plots
+    # plot_metrics(train_df, ["train_loss", "accuracy"], fig_size_modifier=3, save_path=save_path)
+    # plot_epoch_signal(train_layers_df, layer_metrics, [0,10,19], layers=None, fig_size_modifier=15, save_path=save_path)
+    # plot_layer_signal(train_layers_df, layer_metrics, ["blocks.0.conv.1.se_reduce", "blocks.10.conv.2.se_reduce", "blocks.15.conv.2.se_reduce"], num_epochs=None, fig_size_modifier=4, save_path=save_path)
+    

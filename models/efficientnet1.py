@@ -104,23 +104,22 @@ class MBConvBlock(nn.Module):
 
     def forward(self, x):
         if self.residual_connection:
-            # with stochastic depth drop connect
             main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
             return x + main_path
         else:
             return self.conv(x)
 
-class EfficientNet(nn.Module):
+class EfficientNet1(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
-                 num_classes=100, 
+                 num_classes=10, 
                  stem_channels=32, 
                  feature_size=1280, 
                  drop_connect_rate=0.2, 
                  activation=Swish,
                  signal_preserving=False,
                  normalization=True): # so you can easily turn BatchNorm off
-        super(EfficientNet, self).__init__()
+        super(EfficientNet1, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -227,8 +226,6 @@ class EfficientNet(nn.Module):
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He/kaiming initialization
-                # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # nn.init.xavier_normal_(m.weight) # xavier initialization
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
@@ -250,7 +247,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
     activation_class = load_activation_class('modules.activations', 'Swish')
-    model = EfficientNet(model_variant="b0", 
+    model = EfficientNet1(model_variant="b0", 
                          num_classes=100, 
                          stem_channels=32, 
                          feature_size=1280, 
@@ -269,8 +266,8 @@ if __name__ == '__main__':
     print(output.shape)
 
     # Visualize model
-    # dot = make_dot(model(x), params=dict(model.named_parameters()))
-    # dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
+    dot = make_dot(model(x), params=dict(model.named_parameters()))
+    dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
 
     # # Calculate number of parameters
     # print("\nNumber of parameters:")

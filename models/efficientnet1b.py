@@ -32,6 +32,27 @@ def _drop_path(x, drop_prob, training):
     #     x = x * mask
     return x
 
+# on residual path and branch path
+def mp_sum(a, b, weight=0.5):
+    """ Take a weighted average between two tensors and scales the output to have consistent magnitude regardless of the weights.
+    examples:
+        weight = 0.5, both tensors are weighted equally and the output is scaled by 1/sqrt(2)
+        weight = 0.0, only tensor a is used
+        weight = 1.0, only tensor b is used
+        """
+    device = a.device
+    weight_t = torch.tensor(weight, dtype=torch.float32, device=device) if not isinstance(weight, torch.Tensor) else weight
+    weight_norm = torch.sqrt((1 - weight_t)**2 + weight_t**2).clamp(min=1e-5)
+    return torch.lerp(a, b, weight_t) / weight_norm
+
+def se_scaled_mult(main_path, se_weights):
+    """
+    Scales the main path using Squeeze-and-Excite weights with normalized scaling to prevent signal amplification. """
+    # Ensure weights are reshaped for broadcasting across spatial dimensions
+    se_weights = se_weights.view(main_path.size(0), main_path.size(1), 1, 1)
+    weight_norm = torch.sqrt((1 - se_weights) ** 2 + se_weights ** 2).clamp(min=1e-5)
+    return main_path * se_weights / weight_norm
+
 class SqueezeAndExcite(nn.Module):
     def __init__(self, channels, squeeze_channels, se_ratio, activation=Swish, signal_preserving=False):
         super(SqueezeAndExcite, self).__init__()
@@ -51,7 +72,7 @@ class SqueezeAndExcite(nn.Module):
         out = self.se_avgpool(x)
         out = self.se_act(self.se_reduce(out))
         out = self.se_act_scale(self.se_expand(out))
-        return x * out
+        return se_scaled_mult(x, out)
 
 class MBConvBlock(nn.Module):
     def __init__(self, 
@@ -69,6 +90,8 @@ class MBConvBlock(nn.Module):
         self.residual_connection = (stride == 1 and in_channels == out_channels)
         self.drop_connect_rate = drop_connect_rate
         self.norm = normalization
+
+        self.residual_attention = nn.Parameter(torch.tensor(0.5, dtype=torch.float32))
 
         conv = []
 
@@ -104,13 +127,12 @@ class MBConvBlock(nn.Module):
 
     def forward(self, x):
         if self.residual_connection:
-            # with stochastic depth drop connect
             main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
-            return x + main_path
+            return mp_sum(x, main_path, weight=self.residual_attention)
         else:
             return self.conv(x)
 
-class EfficientNet(nn.Module):
+class EfficientNet1b(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
                  num_classes=100, 
@@ -120,7 +142,7 @@ class EfficientNet(nn.Module):
                  activation=Swish,
                  signal_preserving=False,
                  normalization=True): # so you can easily turn BatchNorm off
-        super(EfficientNet, self).__init__()
+        super(EfficientNet1b, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -226,9 +248,7 @@ class EfficientNet(nn.Module):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He/kaiming initialization
-                # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                # nn.init.xavier_normal_(m.weight) # xavier initialization
+                m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He initialization
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
@@ -250,7 +270,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
     activation_class = load_activation_class('modules.activations', 'Swish')
-    model = EfficientNet(model_variant="b0", 
+    model = EfficientNet1b(model_variant="b0", 
                          num_classes=100, 
                          stem_channels=32, 
                          feature_size=1280, 
@@ -269,8 +289,8 @@ if __name__ == '__main__':
     print(output.shape)
 
     # Visualize model
-    # dot = make_dot(model(x), params=dict(model.named_parameters()))
-    # dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
+    dot = make_dot(model(x), params=dict(model.named_parameters()))
+    dot.render(filename=model.__class__.__name__, directory="models/visualizations", format='png')
 
     # # Calculate number of parameters
     # print("\nNumber of parameters:")

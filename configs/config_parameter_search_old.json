@@ -1,0 +1,22 @@
+{
+    "combinable": {
+        "model": ["Linear", "CNN"],
+        "seed" : [868,67,472,362,970],
+        "learning_rate": [0.1, 0.01, 0.001],
+        "batch_size": [512],
+        "num_epochs": [1],
+        "use_scheduler": [false],
+        "scheduler_step_size": [20],
+        "scheduler_gamma": [0.1],
+        "normalization": [true, false],
+        "activation": ["ReLU"],
+        "signal_preserving": [false]
+    },
+    "fixed": {
+        "description": ["pre testing 5 fold spp "],
+        "save_every": [10],
+        "log": [true],
+        "log_signal": [true],
+        "debug": [false]
+    }
+}

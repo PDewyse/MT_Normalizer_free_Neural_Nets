@@ -1,0 +1,18 @@
+{
+    "model": "Possible models: Linear, EfficientNet, SPEfficientNet, SPEfficientNetv2",
+    "seed" : "Random seed for reproducibility",
+    "learning_rate": "Learning rate for the optimizer",
+    "batch_size": "Batch size for training",
+    "num_epochs": "Number of epochs to train",
+    "use_scheduler": "use StepLR scheduler",
+    "scheduler_step_size": "Step size for the scheduler",
+    "scheduler_gamma": "Gamma for the scheduler",
+    "description": "short description of the experiment",
+    "save_every": "Save model every n epochs",
+    "log": "Log training progress via wandb if true, output to terminal if false",
+    "log_signal": "Log all signals, activations, weights, gradients",
+    "debug": "Debug mode, uses random data and other things you want to try",
+    "normalization": "True to use batch normalization, false to not use batch normalization",
+    "activation": "Activation function to use: Swish, HSwish, Sigmoid, HSigmoid, ReLU, SELU",
+    "signal_preserving": "true to use the signal preserving activation function"
+}
