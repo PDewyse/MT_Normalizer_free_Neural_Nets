@@ -222,15 +222,31 @@ class SNEfficientNet(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='linear')
+                fan_in = m.weight.shape[1] * m.weight.shape[2] * m.weight.shape[3]  # number of input connections
+                std = 1.0 / math.sqrt(fan_in)
+                nn.init.normal_(m.weight, mean=0.0, std=std)  # Adjusted variance to 1/n
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.ones_(m.weight)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, mean=0.0, std=0.01)
+                fan_in = m.weight.shape[1]  # number of input connections
+                std = 1.0 / math.sqrt(fan_in)
+                nn.init.normal_(m.weight, mean=0.0, std=std)  # Adjusted variance to 1/n
                 nn.init.zeros_(m.bias)
+    # def _initialize_weights(self):
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Conv2d):
+    #             nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='linear')
+    #             if m.bias is not None:
+    #                 nn.init.zeros_(m.bias)
+    #         elif isinstance(m, nn.BatchNorm2d):
+    #             nn.init.ones_(m.weight)
+    #             nn.init.zeros_(m.bias)
+    #         elif isinstance(m, nn.Linear):
+    #             nn.init.normal_(m.weight, mean=0.0, std=0.01)
+    #             nn.init.zeros_(m.bias)
 
 # Example usage
 if __name__ == '__main__':
@@ -243,7 +259,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(seed)  # If using CUDA
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
-    activation_class = load_activation_class('modules.activations', 'Swish')
+    activation_class = load_activation_class('modules.activations', 'SELU')
     model = SNEfficientNet(model_variant="b0", 
                          num_classes=100, 
                          stem_channels=32, 

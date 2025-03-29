@@ -18,15 +18,15 @@ class CNN(nn.Module):
         self.normalization = normalization
         self.feature_extractor = nn.Sequential(
             nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
-            *([nn.BatchNorm2d(32)] if not self.normalization else []),
+            *([nn.BatchNorm2d(32)] if self.normalization else []),
             activation(signal_preserving=signal_preserving),
             nn.MaxPool2d(kernel_size=2),
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            *([nn.BatchNorm2d(64)] if not self.normalization else []),
+            *([nn.BatchNorm2d(64)] if self.normalization else []),
             activation(signal_preserving=signal_preserving),
             nn.MaxPool2d(kernel_size=2),
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            *([nn.BatchNorm2d(128)] if not self.normalization else []),
+            *([nn.BatchNorm2d(128)] if self.normalization else []),
             activation(signal_preserving=signal_preserving),
             nn.MaxPool2d(kernel_size=2),
             nn.Flatten()

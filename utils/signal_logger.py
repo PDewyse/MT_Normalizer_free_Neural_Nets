@@ -94,10 +94,10 @@ class SignalLogger:
     def _update_stats(self, batch_data, layer, stat_prefix):
         if batch_data:
             concatenated_data = np.concatenate(batch_data, axis=0)
-            if concatenated_data.ndim <= 2: # 1 square batch values, 2 mean 
+            if concatenated_data.ndim <= 2: # 1 square batch values, 2 mean over all
                 mean = np.mean(concatenated_data**2)
                 var = np.var(concatenated_data)
-            elif concatenated_data.ndim == 4: # 1 mean over batch and spatial, 2 square them, 3 mean over channels (so they don't cancel out)
+            elif concatenated_data.ndim == 4: # 1 mean over batch and spatial, 2 square them, 3 mean over channels
                 mean = np.mean(np.mean(concatenated_data, axis=(0,2,3))**2) 
                 var = np.mean(np.var(concatenated_data, axis=(0,2,3)))
             else:

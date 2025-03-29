@@ -1,7 +1,7 @@
 {
     "model": ["SNEfficientNet", "SNEfficientNet1"],
     "seed" : [868, 67,472,362,970],
-    "learning_rate": [0.1, 0.01],
+    "learning_rate": [0.1, 0.01, 0.001],
     "batch_size": [512],
     "num_epochs": [20],
     "use_scheduler": [false],

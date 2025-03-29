@@ -5,37 +5,16 @@ import matplotlib.pyplot as plt
 
 def beautify_layer_name(layer_name):
     """very specific function to make the layer names more presentable, will vary for each model"""
-    # for cnn (no bn)
     last_part = layer_name.split(".")[-1]
-    snd_last_part = layer_name.split(".")[-2]
     try:
         int(last_part)
-        if last_part in "036" and snd_last_part == "feature_extractor":
-            return "Conv"
-        if last_part in "258" and snd_last_part == "feature_extractor":
-            return "MaxPool"
-        # if last_part in "159" and snd_last_part == "feature_extractor":
-        #     return "bn"
-        if last_part == "9":
-            return "Flatten"
-        if last_part in "036" and snd_last_part == "classifier":
-            return "Linear"
-        if last_part in "14" and snd_last_part == "classifier":
+        if last_part == "0":
+            return layer_name.split(".")[-2]
+        if last_part == "1":
             return "bn"
-
+        return layer_name.split(".")[-2]
     except ValueError:
         return last_part
-    # for fnnns
-    # last_part = layer_name.split(".")[-1]
-    # try:
-    #     int(last_part)
-    #     if last_part == "0":
-    #         return layer_name.split(".")[-2]
-    #     if last_part == "1":
-    #         return "bn"
-    #     return layer_name.split(".")[-2]
-    # except ValueError:
-    #     return last_part
     
 def plot_metrics(df, metrics, save_path=None, im_description="", fig_size_modifier=10, **kwargs):
     """
@@ -123,18 +102,18 @@ def plot_epoch_signal(df_mean, df_std, metrics, epochs, layers=None, save_path=N
         if metric not in possible_metrics:
             raise ValueError(f"Metric: {metric} not found in the possible metrics: {possible_metrics}")
     
-    if not all(epoch in df_mean['epoch'].values for epoch in epochs):
+    if not all(epoch in df['epoch'].values for epoch in epochs):
         raise ValueError("One or more epochs not found in the DataFrame epochs.")
     
     if layers is None:  # use all layers
-        layers = df_mean.columns[1:]
+        layers = df.columns[1:]
 
     for layer in layers:
-        if layer not in df_mean.columns:
+        if layer not in df.columns:
             raise ValueError(f"Layer: {layer} not found in the DataFrame columns.")
         else:
             for epoch in epochs:
-                layer_data = df_mean[layer][epoch]
+                layer_data = df[layer][epoch]
                 if not isinstance(layer_data, dict):
                     raise ValueError(f"Layer data for layer: {layer} on epoch: {epoch} must be a dictionary.")
     
@@ -145,10 +124,10 @@ def plot_epoch_signal(df_mean, df_std, metrics, epochs, layers=None, save_path=N
 
     # Ensure 16:9 aspect ratio
     if not debug:
-        fig_size_modifier = 7 # for FNNNs and efficientnets and cnns
-
+        fig_size_modifier = 8 # for FNNNs
+        # fig_size_modifier = 6 # for EfficientNet
     width = fig_size_modifier * num_cols
-    height = width * 8 / 10 # 6/10 for FNNNs and 8/10 efficientnets # 7/10 for CNNs
+    height = width * 8 / 10 # 16/9
 
     fig, axes = plt.subplots(num_rows, num_cols, figsize=(width, height))
     axes = axes.flatten()
@@ -156,26 +135,19 @@ def plot_epoch_signal(df_mean, df_std, metrics, epochs, layers=None, save_path=N
     for i, metric in enumerate(metrics):
         ax = axes[i]
         for epoch in epochs:
-            layer_metric_mean = np.array([df_mean[layer][epoch][metric] for layer in layers])
-            layer_metric_std = np.array([df_std[layer][epoch][metric] for layer in layers])
-
+            layer_metric = [df[layer][epoch][metric] for layer in layers]
             if use_errorbars and f'std_{metric.split("_")[1]}' in metrics and metric.split("_")[0] == "mean":
-                std_metric = [df_mean[layer][epoch][f'std_{metric.split("_")[1]}'] for layer in layers]
-                ax.errorbar(np.arange(len(layers)), layer_metric_mean, yerr=std_metric, **kwargs)
-                y_min = min(layer_metric_mean - np.array(std_metric))
-                y_max = max(layer_metric_mean + np.array(std_metric))
+                std_metric = [df[layer][epoch][f'std_{metric.split("_")[1]}'] for layer in layers]
+                ax.errorbar(np.arange(len(layers)), layer_metric, yerr=std_metric, **kwargs)
+                y_min = min(layer_metric - np.array(std_metric))
+                y_max = max(layer_metric + np.array(std_metric))
                 margin = 0.1 * (y_max - y_min)
                 ax.set_ylim(y_min - margin, y_max + margin)
             if debug:
-                ax.plot(layers, layer_metric_mean, label=f'Epoch {epoch}', **kwargs)
+                ax.plot(layers, layer_metric, label=f'Epoch {epoch}', **kwargs)
             if not debug:
-                # ax.plot(layers, layer_metric_mean, label=f'Epoch {epoch}', **kwargs)
-                ax.plot(np.arange(len(layers)), layer_metric_mean, label=f'Epoch {epoch}', **kwargs)
-                # ax.errorbar(layers, layer_metric_mean, yerr=layer_metric_std, fmt='-o', capsize=5, label='_nolegend_')
-                # ax.fill_between(layers, 
-                #     layer_metric_mean - layer_metric_std, 
-                #     layer_metric_mean + layer_metric_std, 
-                #     color='b', alpha=0.2, label='_nolegend_')
+                ax.plot(layers, layer_metric, label=f'Epoch {epoch}', **kwargs)
+                # ax.plot(np.arange(len(layers)), layer_metric, label=f'Epoch {epoch}', **kwargs)
             
             # Add horizontal line at 0 for mean_act and mean_weight, and at 1 for std_act and std_weight
             ax.axhline(0, color='black', linestyle='dotted')
@@ -198,28 +170,26 @@ def plot_epoch_signal(df_mean, df_std, metrics, epochs, layers=None, save_path=N
             ax.set_xticks(np.arange(len(layers)))
             # make the layer names less technical
             compact_layers = [beautify_layer_name(layer) for layer in layers]
-            ax.set_xticklabels(compact_layers, rotation=45, ha='right', fontsize=label_size-1)
+            ax.set_xticklabels(compact_layers, rotation=45, ha='right', fontsize=label_size)
             ax.tick_params(axis='y', labelsize=label_size)
 
-            # # with compacting the layer names for EfficientNet
+            # with compacting the layer names for EfficientNet
             # label_size = 11
             # general_size = 15
             # ax.set_xticks(np.arange(0, len(layers), 50))
             # ax.set_xticklabels(np.arange(0, len(layers), 50), fontsize=label_size)
             # ax.tick_params(axis='y', labelsize=label_size)
             # # without compacting the layer names
-            # ax.set_xticks(np.arange(0, len(layers), 20))
-            # ax.set_xticklabels(np.arange(0, len(layers), 20))
+            # ax.set_xticks(np.arange(0, len(layers), 5))
+            # ax.set_xticklabels(np.arange(0, len(layers), 5))
             
-            # if "act" in metric:
-            #     ax.set_ylim(0, 1)
             ax.set_xlabel("Model Depth (layers)", fontsize=general_size)
-            # ax.set_ylim(0, 200)
+            # ax.set_ylim(0, 1e-9)
 
         ylabel = "ACSM" if "mean" in metric else "ACV"
         metric_name = "Activations" if "act" in metric else "Weights" if "weight" in metric else "Gradients"
-        ax.set_ylabel(f"{ylabel} of {metric_name}")#, fontsize=general_size-1)
-        ax.legend()#fontsize=general_size-1)
+        ax.set_ylabel(f"{ylabel} of {metric_name}", fontsize=general_size)
+        ax.legend(fontsize=general_size-1)
         
     # Remove empty subplots
     for i in range(num_plots, len(axes)):
@@ -382,6 +352,7 @@ def calculate_mean_std(dfs, metrics, epochs=None, layers=None):
                     if not isinstance(layer_data, dict):
                         raise ValueError(f"Layer data for layer: {layer} on epoch: {epoch} must be a dictionary.")
     
+    # Copy structure from an existing DataFrame (assuming dfs is not empty)
     train_layers_mean_df = dfs[0].copy()
     train_layers_std_df = dfs[0].copy()
 
@@ -389,7 +360,7 @@ def calculate_mean_std(dfs, metrics, epochs=None, layers=None):
     for metric in metrics:
         for epoch in epochs:
             for layer in layers:
-                values = [df[layer][epoch][metric] for df in dfs]  # Extract values from all data frames
+                values = [df[layer][epoch][metric] for df in dfs]  # Extract values from all dataframes
                 train_layers_mean_df[layer][epoch][metric] = np.mean(values)
                 train_layers_std_df[layer][epoch][metric] = np.std(values)
 
@@ -400,14 +371,18 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__)) # root/utils
     root_dir = os.path.dirname(script_dir) # root
 
-    model_name = "SNEfficientNet"
-    use_debugging = True
+    model_name = "FFNN"
+    use_debugging = False
     use_errorbars = False
     # get all folder names under the root folder
     folder_dir = os.path.join(root_dir, "checkpoints", model_name)
     run_folders = os.listdir(folder_dir)
-    run_folders = ["2025-03-16_16-54-07_verifying sigmoid"]
-    # 2024-12-08_05-46-13_test 5 fold spp bn and lr
+    run_folders = ["2024-12-08_00-28-45_test 5 fold spp bn and lr",
+                   "2024-12-08_01-15-52_test 5 fold spp bn and lr",
+                   "2024-12-08_02-06-55_test 5 fold spp bn and lr",
+                   "2024-12-08_02-57-58_test 5 fold spp bn and lr",
+                   "2024-12-08_03-49-19_test 5 fold spp bn and lr"
+                   ]
       
     for i in range(len(run_folders)):
         print(f"Processing run: {run_folders[i]} ({i+1}/{len(run_folders)})")
@@ -426,8 +401,8 @@ if __name__ == "__main__":
             layer_metrics = ['mean_act', 'std_act', 'mean_weight', 'std_weight', 'mean_grad', 'std_grad']
             dfs_layers.append(train_layers_df)
         
-        # Calculate the mean and standard deviation of the data frames
-        # train_layers_mean_df, train_layers_std_df = calculate_mean_std(dfs_layers, layer_metrics)
+        # Calculate the mean and standard deviation of the dataframes
+        train_layers_mean_df, train_layers_std_df = calculate_mean_std(dfs_layers, layer_metrics)
 
         # Plot the training and testing metrics
         save_path = os.path.join(train_run_dir, "figures")
@@ -435,13 +410,12 @@ if __name__ == "__main__":
             os.makedirs(save_path)
 
         image_description = run_folders[i].split("_")[-1]
-        plot_metrics(df=train_metrics_df,
+        plot_metrics(df=train_layers_mean_df,
                         metrics=train_metrics, 
                         fig_size_modifier=10, 
                         save_path=save_path, 
                         im_description=image_description)
-        plot_epoch_signal(df_mean=train_layers_df,
-                            df_std=train_layers_df,
+        plot_epoch_signal(df_mean=train_layers_mean_df,
                             metrics=layer_metrics, 
                             epochs=[0,9,19],
                             fig_size_modifier=50, 
