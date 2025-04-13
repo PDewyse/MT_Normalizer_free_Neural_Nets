@@ -1,5 +1,5 @@
 {
-    "model": "SNEfficientNet",
+    "model": "DyMPSNEfficientNet1",
     "seed" : 34,
     "learning_rate": 0.001,
     "batch_size": 512,
@@ -7,7 +7,7 @@
     "use_scheduler": false,
     "scheduler_step_size": 40,
     "scheduler_gamma": 0.1,
-    "description": "verifying sigmoid",
+    "description": "adding lr param",
     "save_every": 10,
     "log": true,
     "log_signal": true,

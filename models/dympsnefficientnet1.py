@@ -89,6 +89,7 @@ class MBConvBlock(nn.Module):
         self.residual_connection = (stride == 1 and in_channels == out_channels)
         self.drop_connect_rate = drop_connect_rate
         self.norm = normalization
+        self.weight = nn.Parameter(torch.tensor(0.5))
 
         conv = []
         # Point wise convolution phase
@@ -125,11 +126,11 @@ class MBConvBlock(nn.Module):
         if self.residual_connection:
             main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
             # for mp_sum, the first argument is the main path and the second argument is the branch path
-            return mp_sum(x, main_path)
+            return mp_sum(x, main_path, self.weight)
         else:
             return self.conv(x)
 
-class SNEfficientNet1(nn.Module):
+class DyMPSNEfficientNet1(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
                  num_classes=100, 
@@ -139,7 +140,7 @@ class SNEfficientNet1(nn.Module):
                  activation=Swish,
                  signal_preserving=False,
                  normalization=True): # so you can easily turn BatchNorm off
-        super(SNEfficientNet1, self).__init__()
+        super(DyMPSNEfficientNet1, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -266,7 +267,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
     activation_class = load_activation_class('modules.activations', 'SELU')
-    model = SNEfficientNet1(model_variant="b0", 
+    model = DyMPSNEfficientNet1(model_variant="b0", 
                          num_classes=100, 
                          stem_channels=32, 
                          feature_size=1280, 
@@ -282,6 +283,8 @@ if __name__ == '__main__':
     loss = criterion(output, target)
     print(loss)
     print(output.shape)
+    for name, param in model.named_parameters():
+        print(name, param.shape)
 
     # Visualize model
     # dot = make_dot(model(x), params=dict(model.named_parameters()))

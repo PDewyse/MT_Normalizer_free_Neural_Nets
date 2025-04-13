@@ -1,0 +1,18 @@
+{
+    "model": ["DyTEfficientNet", "DyTSNEfficientNet","DyMPSNEfficientNet1","WSEfficientNet","WSSNEfficientNet","WSSNEfficientNet1"],
+    "seed" : [868, 67,472,362,970],
+    "learning_rate": [0.1, 0.01, 0.001,0.0001],
+    "batch_size": [512],
+    "num_epochs": [20],
+    "use_scheduler": [false],
+    "scheduler_step_size": [20],
+    "scheduler_gamma": [0.1],
+    "description": ["additional tests"],
+    "save_every": [10],
+    "log": [true],
+    "log_signal": [false],
+    "debug": [false],
+    "normalization": [false],
+    "activation": ["SELU"],
+    "signal_preserving": [false]
+}

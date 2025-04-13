@@ -1,13 +1,13 @@
 import math
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 if __name__ == '__main__':
     from modules.activations import Swish, load_activation_class
+    from modules.dynamictanh import DynamicTanh
 else:
     from models.modules.activations import Swish
+    from models.modules.dynamictanh import DynamicTanh
 
 def _round_channels(c, divisor=8, min_value=None):
     """ Round number of channels to the nearest multiple of divisor."""
@@ -24,33 +24,15 @@ def _round_repeats(repeats):
     """ Round number of repeats to the nearest integer."""
     return int(math.ceil(repeats))
 
-# use alpha drop out
 def _drop_path(x, drop_prob, training):
-    # """ Apply alpha dropout regularization to input `x` during training."""
+    # """ Apply drop path regularization to input `x` during training."""
     # if drop_prob > 0 and training:
-    #     x = F.alpha_dropout(x, p=drop_prob, training=training)
+    #     keep_prob = 1 - drop_prob
+    #     # Create the mask with the appropriate device and data type
+    #     mask = torch.tensor(keep_prob, device=x.device, dtype=x.dtype).bernoulli_().expand_as(x)
+    #     x = x / keep_prob  # Scale to maintain expected values
+    #     x = x * mask
     return x
-
-# on residual path and branch path
-def mp_sum(a, b, weight=0.5):
-    """ Take a weighted average between two tensors and scales the output to have consistent magnitude regardless of the weights.
-    examples:
-        weight = 0.5, both tensors are weighted equally and the output is scaled by 1/sqrt(2)
-        weight = 0.0, only tensor a is used
-        weight = 1.0, only tensor b is used
-        """
-    device = a.device
-    weight_t = torch.tensor(weight, dtype=torch.float32, device=device) if not isinstance(weight, torch.Tensor) else weight
-    weight_norm = torch.sqrt((1 - weight_t)**2 + weight_t**2).clamp(min=1e-5)
-    return torch.lerp(a, b, weight_t) / weight_norm
-
-def se_scaled_mult(main_path, se_weights):
-    """
-    Scales the main path using Squeeze-and-Excite weights with normalized scaling to prevent signal amplification. """
-    # Ensure weights are reshaped for broadcasting across spatial dimensions
-    se_weights = se_weights.view(main_path.size(0), main_path.size(1), 1, 1)
-    weight_norm = torch.sqrt((1 - se_weights) ** 2 + se_weights ** 2).clamp(min=1e-5)
-    return main_path * se_weights / weight_norm
 
 class SqueezeAndExcite(nn.Module):
     def __init__(self, channels, squeeze_channels, se_ratio, activation=Swish, signal_preserving=False):
@@ -71,7 +53,7 @@ class SqueezeAndExcite(nn.Module):
         out = self.se_avgpool(x)
         out = self.se_act(self.se_reduce(out))
         out = self.se_act_scale(self.se_expand(out))
-        return se_scaled_mult(x, out)
+        return x * out
 
 class MBConvBlock(nn.Module):
     def __init__(self, 
@@ -82,7 +64,8 @@ class MBConvBlock(nn.Module):
                  drop_connect_rate, 
                  activation=Swish,
                  signal_preserving=False,
-                 normalization=True):
+                 normalization=True,
+                 alpha=0.5):
         super(MBConvBlock, self).__init__()
 
         expand_channels = in_channels * expand_ratio
@@ -91,11 +74,12 @@ class MBConvBlock(nn.Module):
         self.norm = normalization
 
         conv = []
+
         # Point wise convolution phase
         if expand_ratio != 1:
             pointwise_conv1 = nn.Sequential(
                 nn.Conv2d(in_channels, expand_channels, 1, 1, 0, bias=False),
-                *([nn.BatchNorm2d(expand_channels)] if self.norm else []),
+                *([nn.BatchNorm2d(expand_channels)] if self.norm else [DynamicTanh(expand_channels, False, alpha)]),
                 activation(signal_preserving=signal_preserving)
                 )
             conv.append(pointwise_conv1)
@@ -103,7 +87,7 @@ class MBConvBlock(nn.Module):
         # Depth wise convolution phase
         depthwise_conv = nn.Sequential(
             nn.Conv2d(expand_channels, expand_channels, kernel_size, stride, kernel_size // 2, groups=expand_channels, bias=False),
-            *([nn.BatchNorm2d(expand_channels)] if self.norm else []),
+            *([nn.BatchNorm2d(expand_channels)] if self.norm else [DynamicTanh(expand_channels, False, alpha)]),
             activation(signal_preserving=signal_preserving)
             )
         conv.append(depthwise_conv)
@@ -111,11 +95,11 @@ class MBConvBlock(nn.Module):
         # Squeeze and excite phase
         if se_ratio != 0:
             conv.append(SqueezeAndExcite(expand_channels, in_channels, se_ratio, activation=activation, signal_preserving=signal_preserving))
-
+        
         # Projection phase
         pointwise_conv2 = nn.Sequential(
             nn.Conv2d(expand_channels, out_channels, 1, 1, 0, bias=False),
-            *([nn.BatchNorm2d(out_channels)] if self.norm else [])
+            *([nn.BatchNorm2d(out_channels)] if self.norm else [DynamicTanh(out_channels, False, alpha)])
             )
         conv.append(pointwise_conv2)
 
@@ -123,13 +107,13 @@ class MBConvBlock(nn.Module):
 
     def forward(self, x):
         if self.residual_connection:
+            # with stochastic depth drop connect
             main_path = _drop_path(self.conv(x), self.drop_connect_rate, self.training)
-            # for mp_sum, the first argument is the main path and the second argument is the branch path
-            return mp_sum(x, main_path)
+            return x + main_path
         else:
             return self.conv(x)
 
-class SNEfficientNet1(nn.Module):
+class DyTEfficientNet(nn.Module):
     def __init__(self, 
                  model_variant="b0", 
                  num_classes=100, 
@@ -138,8 +122,9 @@ class SNEfficientNet1(nn.Module):
                  drop_connect_rate=0.2, 
                  activation=Swish,
                  signal_preserving=False,
-                 normalization=True): # so you can easily turn BatchNorm off
-        super(SNEfficientNet1, self).__init__()
+                 normalization=True,
+                 alpha=0.5): # so you can easily turn BatchNorm off
+        super(DyTEfficientNet, self).__init__()
         variants = {
             'b0': (1.0, 1.0, 224, 0.2),
             'b1': (1.0, 1.1, 240, 0.2),
@@ -181,10 +166,10 @@ class SNEfficientNet1(nn.Module):
         # stem convolution
         self.stem = nn.Sequential(
             nn.Conv2d(3, stem_channels, 3, 2, 1, bias=False),
-            *([nn.BatchNorm2d(stem_channels)] if normalization else []),
+            *([nn.BatchNorm2d(stem_channels)] if normalization else [DynamicTanh(stem_channels, False, alpha)]),
             activation(signal_preserving=signal_preserving)
             )
-        
+
         # mobile inverted bottleneck
         total_blocks = sum(conf[6] for conf in config)
         blocks = []
@@ -200,7 +185,8 @@ class SNEfficientNet1(nn.Module):
                                       drop_rate, 
                                       activation=activation, 
                                       signal_preserving=signal_preserving, 
-                                      normalization=normalization))
+                                      normalization=normalization,
+                                      alpha=alpha))
             
             for _ in range(repeats-1):
                 drop_rate = drop_connect_rate * (len(blocks) / total_blocks)
@@ -213,17 +199,18 @@ class SNEfficientNet1(nn.Module):
                                           drop_rate, 
                                           activation=activation,
                                           signal_preserving=signal_preserving,
-                                          normalization=normalization))
+                                          normalization=normalization,
+                                          alpha=alpha))
 
         self.blocks = nn.Sequential(*blocks)
 
         # head convolution
         self.head = nn.Sequential(
             nn.Conv2d(config[-1][1], feature_size, 1, 1, 0, bias=False),
-            *([nn.BatchNorm2d(feature_size)] if normalization else []),
+            *([nn.BatchNorm2d(feature_size)] if normalization else [DynamicTanh(feature_size, False, alpha)]),
             activation(signal_preserving=signal_preserving)
             )
-        
+
         # classifier
         self.classifier = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
@@ -244,7 +231,10 @@ class SNEfficientNet1(nn.Module):
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='linear')
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2.0 / n)) # He/kaiming initialization
+                # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                # nn.init.xavier_normal_(m.weight) # xavier initialization
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm2d):
@@ -265,15 +255,17 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(seed)  # If using CUDA
     torch.cuda.manual_seed_all(seed)  # If using multiple GPUs
 
-    activation_class = load_activation_class('modules.activations', 'SELU')
-    model = SNEfficientNet1(model_variant="b0", 
+    activation_class = load_activation_class('modules.activations', 'Swish')
+    model = DyTEfficientNet(model_variant="b0", 
                          num_classes=100, 
                          stem_channels=32, 
                          feature_size=1280, 
                          drop_connect_rate=0.2, 
                          activation=activation_class,
                          signal_preserving=False,
-                         normalization=False)
+                         normalization=False,
+                         alpha=0.5)
+
     criterion = torch.nn.CrossEntropyLoss()
     model = model.to("cuda")
     target = torch.randint(1, 100, (10,)).to("cuda")

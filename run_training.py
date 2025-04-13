@@ -67,6 +67,7 @@ def main(args):
     normalization = get_with_warning(config, 'normalization', True)
     activation = get_with_warning(config, 'activation', 'Swish')
     signal_preserving = get_with_warning(config, 'signal_preserving', False)
+    # alpha = get_with_warning(config, 'alpha', 0.5) # fDynamic tanh hyperparameter
 
     # Seed for torch and everything
     set_seed(seed)
@@ -93,7 +94,13 @@ def main(args):
         'NFEfficientNetv3', 
         "NFEfficientNetv4",
         "SENet",
-        "NFMobileNetv3"
+        "NFMobileNetv3",
+        "DyTEfficientNet",
+        "DyTSNEfficientNet",
+        "WSEfficientNet",
+        "WSSNEfficientNet",
+        "WSSNEfficientNet1",
+        "DyMPSNEfficientNet1"
         ] # TODO: find a way to automate this lookup via ast.parse
     
     if model_name not in model_names:
@@ -148,7 +155,9 @@ def main(args):
         print(f"Loading model: {model_name}")
         model_class = load_class(f'models.{model_name.lower()}', model_name)
         activation_class = load_class('models.modules.activations', activation) # Instantiate inside the model for plotting
-        model = model_class(activation=activation_class, signal_preserving=signal_preserving, normalization=normalization)
+        model = model_class(activation=activation_class, 
+                            signal_preserving=signal_preserving, 
+                            normalization=normalization)
         # model = torchvision.models.efficientnet_b0() # weights="IMAGENET1K_V1"
         # model.classifier = torch.nn.LazyLinear(100)
 

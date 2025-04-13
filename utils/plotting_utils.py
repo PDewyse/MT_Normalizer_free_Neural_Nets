@@ -193,23 +193,23 @@ def plot_epoch_signal(df_mean, df_std, metrics, epochs, layers=None, save_path=N
             # ax.set_ylim(0, 1e-8)
         else:
             # with compacting the layer names for FFNN
-            label_size = 10
-            general_size = 13
-            ax.set_xticks(np.arange(len(layers)))
-            # make the layer names less technical
-            compact_layers = [beautify_layer_name(layer) for layer in layers]
-            ax.set_xticklabels(compact_layers, rotation=45, ha='right', fontsize=label_size-1)
-            ax.tick_params(axis='y', labelsize=label_size)
-
-            # # with compacting the layer names for EfficientNet
-            # label_size = 11
-            # general_size = 15
-            # ax.set_xticks(np.arange(0, len(layers), 50))
-            # ax.set_xticklabels(np.arange(0, len(layers), 50), fontsize=label_size)
+            # label_size = 10
+            # general_size = 13
+            # ax.set_xticks(np.arange(len(layers)))
+            # # make the layer names less technical
+            # compact_layers = [beautify_layer_name(layer) for layer in layers]
+            # ax.set_xticklabels(compact_layers, rotation=45, ha='right', fontsize=label_size-1)
             # ax.tick_params(axis='y', labelsize=label_size)
-            # # without compacting the layer names
-            # ax.set_xticks(np.arange(0, len(layers), 20))
-            # ax.set_xticklabels(np.arange(0, len(layers), 20))
+
+            # with compacting the layer names for EfficientNet
+            label_size = 11
+            general_size = 15
+            ax.set_xticks(np.arange(0, len(layers), 50))
+            ax.set_xticklabels(np.arange(0, len(layers), 50), fontsize=label_size)
+            ax.tick_params(axis='y', labelsize=label_size)
+            # without compacting the layer names
+            ax.set_xticks(np.arange(0, len(layers), 20))
+            ax.set_xticklabels(np.arange(0, len(layers), 20))
             
             # if "act" in metric:
             #     ax.set_ylim(0, 1)
@@ -400,13 +400,13 @@ if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__)) # root/utils
     root_dir = os.path.dirname(script_dir) # root
 
-    model_name = "SNEfficientNet"
-    use_debugging = True
+    model_name = "WSSNEfficientNet1"
+    use_debugging = False
     use_errorbars = False
     # get all folder names under the root folder
     folder_dir = os.path.join(root_dir, "checkpoints", model_name)
     run_folders = os.listdir(folder_dir)
-    run_folders = ["2025-03-16_16-54-07_verifying sigmoid"]
+    run_folders = ["2025-04-05_13-06-42_spp run"]
     # 2024-12-08_05-46-13_test 5 fold spp bn and lr
       
     for i in range(len(run_folders)):

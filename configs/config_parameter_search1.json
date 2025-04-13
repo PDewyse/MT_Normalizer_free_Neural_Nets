@@ -1,18 +1,18 @@
 {
-    "model": ["DyMPSNEfficientNet1"],
+    "model": ["DyTEfficientNet","WSEfficientNet"],
     "seed" : [868],
-    "learning_rate": [0.001],
+    "learning_rate": [0.01,0.001,0.0001],
     "batch_size": [512],
     "num_epochs": [1],
     "use_scheduler": [false],
     "scheduler_step_size": [20],
     "scheduler_gamma": [0.1],
-    "description": ["test run for additional tests"],
+    "description": ["additonal tests for spp"],
     "save_every": [10],
     "log": [true],
     "log_signal": [true],
     "debug": [false],
     "normalization": [false],
-    "activation": ["SELU"],
+    "activation": ["Swish"],
     "signal_preserving": [false]
 }
