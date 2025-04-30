@@ -406,7 +406,7 @@ if __name__ == "__main__":
     # get all folder names under the root folder
     folder_dir = os.path.join(root_dir, "checkpoints", model_name)
     run_folders = os.listdir(folder_dir)
-    run_folders = ["2025-04-05_13-06-42_spp run"]
+    run_folders = ["2025-04-16_20-16-37_lower lr"]
     # 2024-12-08_05-46-13_test 5 fold spp bn and lr
       
     for i in range(len(run_folders)):
@@ -443,7 +443,7 @@ if __name__ == "__main__":
         plot_epoch_signal(df_mean=train_layers_df,
                             df_std=train_layers_df,
                             metrics=layer_metrics, 
-                            epochs=[0,9,19],
+                            epochs=[0],
                             fig_size_modifier=50, 
                             save_path=save_path, 
                             im_description=image_description,
